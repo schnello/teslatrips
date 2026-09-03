@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Lilith · Trips</title>
+    <link rel="icon" type="image/png" href="tesla.png">
+
+    <link rel="stylesheet" href="trips.css?v=20260823-2">
+
+    <style>
+        /*
+         * Zeitraum-Auswahl
+         *
+         * Absichtlich hier im HTML, damit trips.css
+         * zunächst nicht geändert werden muss.
+         */
+
+        .range-bar {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 10px;
+
+            margin: 0 0 16px 0;
+        }
+
+        .range-label {
+            font-size: 13px;
+            opacity: 0.7;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .range-select {
+            appearance: none;
+            -webkit-appearance: none;
+
+            background: rgba(0, 0, 0, 0.65);
+            color: #fff;
+
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+
+            padding: 8px 34px 8px 12px;
+
+            font-size: 14px;
+
+            cursor: pointer;
+
+            background-image:
+                linear-gradient(45deg, transparent 50%, #fff 50%),
+                linear-gradient(135deg, #fff 50%, transparent 50%);
+
+            background-position:
+                calc(100% - 15px) 50%,
+                calc(100% - 10px) 50%;
+
+            background-size:
+                5px 5px,
+                5px 5px;
+
+            background-repeat: no-repeat;
+        }
+
+        .range-select:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.6);
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="bg-layer"></div>
+<div class="overlay"></div>
+
+<main class="page">
+
+    <header class="header">
+        <div class="brand">Lilith</div>
+        <div class="subtitle">Trip & Charging History</div>
+    </header>
+
+
+    <!-- =====================================================
+         ZEITRAUM
+         ===================================================== -->
+
+    <div class="range-bar">
+
+        <label
+            class="range-label"
+            for="rangeSelect"
+        >
+            Zeitraum
+        </label>
+
+        <select
+            id="rangeSelect"
+            class="range-select"
+        >
+            <option value="1">1 Tag</option>
+            <option value="7">7 Tage</option>
+            <option value="14">14 Tage</option>
+            <option value="31" selected>31 Tage</option>
+            <option value="90">90 Tage</option>
+            <option value="365">1 Jahr</option>
+            <option value="all">Alle</option>
+        </select>
+
+    </div>
+
+
+    <!-- =====================================================
+         GESAMTSTATISTIK
+         ===================================================== -->
+
+    <section class="stats">
+
+        <div class="stat">
+            <div
+                class="stat-value"
+                id="totalTrips"
+            >
+                –
+            </div>
+
+            <div class="stat-label">
+                Trips
+            </div>
+        </div>
+
+
+        <div class="stat">
+            <div
+                class="stat-value"
+                id="totalDistance"
+            >
+                –
+            </div>
+
+            <div class="stat-label">
+                Kilometer
+            </div>
+        </div>
+
+
+        <div class="stat">
+            <div
+                class="stat-value"
+                id="averageConsumption"
+            >
+                –
+            </div>
+
+            <div class="stat-label">
+                Ø kWh / 100 km
+            </div>
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         TRIPS
+         ===================================================== -->
+
+    <section id="tripContainer">
+
+        <div class="message">
+            Lade Trip-Daten ...
+        </div>
+
+    </section>
+
+
+    <footer class="footer">
+        HOSTED AT SERVICE-UPLINK.DE
+    </footer>
+
+</main>
+
+
+<script>
+
+/*
+ * ============================================================
+ * DATENQUELLE
+ * ============================================================
+ */
+
+const API_URL =
+    "/api/tesla/trips";
+
+const CHARGING_API_URL =
+    "/api/tesla/charging";
+
+const CHARGING_CURVE_API_URL =
+    "/api/tesla/charging/curve";
+
+
+/*
+ * ============================================================
+ * ZEITRAUM
+ * ============================================================
+ */
+
+let selectedDays = "31";
+
+
+/*
+ * ============================================================
+ * ORTSNAMEN AUFBEREITEN
+ * ============================================================
+ *
+ * Die Datenbank bleibt unverändert.
+ *
+ * Beispiel:
+ *
+ * Kopernikus-Straße, Oberhaus, Vöcklabruck,
+ * Bezirk Vöcklabruck, Oberösterreich, 4840, Österreich
+ *
+ * wird angezeigt als:
+ *
+ * Kopernikus-Straße, Vöcklabruck, Österreich
+ *
+ */
+
+function formatLocationName(name, street, houseNumber, city, country) {
+
+    // ============================================================
+    // 1. Bevorzugt: vollständige strukturierte Daten
+    // ============================================================
+
+    if (street && city) {
+
+        const streetLine = [
+            street,
+            houseNumber
+        ]
+            .filter(Boolean)
+            .join(" ");
+
+        return [
+            streetLine,
+            city,
+            country
+        ]
+            .filter(Boolean)
+            .join(", ");
+    }
+
+
+    // ============================================================
+    // 2. Fallback: vollständigen Nominatim-Namen auswerten
+    //
+    // Beispiel:
+    // 20, Tiefenbach, Frankenburg am Hausruck,
+    // Bezirk Vöcklabruck, Oberösterreich, 4871, Österreich
+    //
+    // wird zu:
+    // Tiefenbach 20, Frankenburg am Hausruck, Österreich
+    // ============================================================
+
+    if (name) {
+
+        const parts = String(name)
+            .split(",")
+            .map(part => part.trim())
+            .filter(Boolean);
+
+        if (parts.length >= 3) {
+
+            let detectedHouseNumber = null;
+            let detectedStreet = null;
+            let detectedCity = null;
+            let detectedCountry = null;
+
+
+            // ----------------------------------------------------
+            // Hausnummer
+            // ----------------------------------------------------
+
+            if (/^\d+[a-zA-Z]?$/.test(parts[0])) {
+                detectedHouseNumber = parts[0];
+            }
+
+
+            // ----------------------------------------------------
+            // Straße / Ortsteil
+            // ----------------------------------------------------
+
+            if (detectedHouseNumber && parts[1]) {
+                detectedStreet = parts[1];
+            }
+
+
+            // ----------------------------------------------------
+            // Ort
+            // ----------------------------------------------------
+
+            if (detectedHouseNumber && parts[2]) {
+                detectedCity = parts[2];
+            }
+
+
+            // ----------------------------------------------------
+            // Land = letzter Bestandteil
+            // ----------------------------------------------------
+
+            detectedCountry =
+                parts[parts.length - 1];
+
+
+            // ----------------------------------------------------
+            // Ausgabe
+            // ----------------------------------------------------
+
+            if (detectedStreet && detectedCity) {
+
+                const streetLine = [
+                    detectedStreet,
+                    detectedHouseNumber
+                ]
+                    .filter(Boolean)
+                    .join(" ");
+
+                return [
+                    streetLine,
+                    detectedCity,
+                    detectedCountry
+                ]
+                    .filter(Boolean)
+                    .join(", ");
+            }
+        }
+
+
+        // Wenn der Nominatim-String nicht erkannt wird:
+        // Original unverändert anzeigen
+        return name;
+    }
+
+
+    // ============================================================
+    // 3. Letzter Fallback
+    // ============================================================
+
+    const fallbackStreet = [
+        street,
+        houseNumber
+    ]
+        .filter(Boolean)
+        .join(" ");
+
+    const fallback = [
+        fallbackStreet,
+        city,
+        country
+    ]
+        .filter(Boolean)
+        .join(", ");
+
+    return fallback || "Unbekannt";
+}
+/*
+ * ============================================================
+ * DATUM / ZEIT
+ * ============================================================
+ */
+
+function formatDate(dateString) {
+
+    const date =
+        new Date(dateString);
+
+
+    return date.toLocaleDateString(
+        "de-AT",
+        {
+            weekday: "long",
+            day: "2-digit",
+            month: "long",
+            year: "numeric"
+        }
+    );
+}
+
+
+function formatTime(dateString) {
+
+    const date =
+        new Date(dateString);
+
+
+    return date.toLocaleTimeString(
+        "de-AT",
+        {
+            hour: "2-digit",
+            minute: "2-digit"
+        }
+    );
+}
+
+
+/*
+ * ============================================================
+ * DAUER
+ * ============================================================
+ */
+
+function formatDuration(seconds) {
+
+    const minutes =
+        Math.round(
+            Number(seconds || 0) / 60
+        );
+
+
+    const hours =
+        Math.floor(
+            minutes / 60
+        );
+
+
+    const mins =
+        minutes % 60;
+
+
+    if (hours > 0) {
+
+        return `${hours}h ${String(mins).padStart(2, "0")}min`;
+    }
+
+
+    return `${mins} min`;
+}
+
+
+/*
+ * ============================================================
+ * ZAHLEN
+ * ============================================================
+ */
+
+function formatNumber(
+    value,
+    decimals = 1
+) {
+
+    const number =
+        Number(value);
+
+
+    if (!Number.isFinite(number)) {
+
+        return "–";
+    }
+
+
+    return number.toLocaleString(
+        "de-AT",
+        {
+            minimumFractionDigits:
+                decimals,
+
+            maximumFractionDigits:
+                decimals
+        }
+    );
+}
+
+
+/*
+ * ============================================================
+ * TRIPS RENDERN
+ * ============================================================
+ */
+
+function renderHistory(trips, chargingSessions) {
+
+    const container =
+        document.getElementById(
+            "tripContainer"
+        );
+
+
+    const safeTrips =
+        Array.isArray(trips)
+            ? trips
+            : [];
+
+    const safeChargingSessions =
+        Array.isArray(chargingSessions)
+            ? chargingSessions
+            : [];
+
+
+    // ========================================================
+    // STATISTIK - weiterhin reine Fahrstatistik
+    // ========================================================
+
+    const totalDistance =
+        safeTrips.reduce(
+            (sum, trip) =>
+                sum + Number(trip.distance_km || 0),
+            0
+        );
+
+    const totalEnergy =
+        safeTrips.reduce(
+            (sum, trip) =>
+                sum + Number(trip.consumed_kwh || 0),
+            0
+        );
+
+    const averageConsumption =
+        totalDistance > 0
+            ? (totalEnergy / totalDistance) * 100
+            : 0;
+
+
+    document.getElementById(
+        "totalTrips"
+    ).textContent =
+        safeTrips.length;
+
+    document.getElementById(
+        "totalDistance"
+    ).textContent =
+        formatNumber(totalDistance);
+
+    document.getElementById(
+        "averageConsumption"
+    ).textContent =
+        formatNumber(averageConsumption);
+
+
+    // ========================================================
+    // TRIPS + LADEVORGÄNGE ZUSAMMENFÜHREN
+    // ========================================================
+
+    const history = [
+        ...safeTrips.map(trip => ({
+            history_type: "trip",
+            sort_time:
+                trip.end_time ||
+                trip.start_time,
+            data: trip
+        })),
+
+        ...safeChargingSessions.map(session => ({
+            history_type: "charging",
+            sort_time:
+                session.end_time ||
+                session.start_time,
+            data: session
+        }))
+    ];
+
+
+    history.sort(
+        (a, b) =>
+            new Date(b.sort_time || 0) -
+            new Date(a.sort_time || 0)
+    );
+
+
+    if (history.length === 0) {
+
+        container.innerHTML = `
+            <div class="message">
+                Keine Fahrten oder Ladevorgänge im gewählten Zeitraum vorhanden.
+            </div>
+        `;
+
+        return;
+    }
+
+
+    // ========================================================
+    // NACH TAGEN GRUPPIEREN
+    // ========================================================
+
+    const groups = {};
+
+    history.forEach(item => {
+
+        if (!item.sort_time) {
+            return;
+        }
+
+        const key =
+            new Date(item.sort_time)
+                .toLocaleDateString("de-AT");
+
+        if (!groups[key]) {
+            groups[key] = [];
+        }
+
+        groups[key].push(item);
+    });
+
+
+    container.innerHTML = "";
+
+
+    Object.values(groups).forEach(dayItems => {
+
+        const section =
+            document.createElement("section");
+
+        section.className =
+            "day";
+
+
+        const title =
+            document.createElement("div");
+
+        title.className =
+            "day-title";
+
+        title.textContent =
+            formatDate(
+                dayItems[0].sort_time
+            );
+
+        section.appendChild(title);
+
+
+        dayItems.forEach(item => {
+
+            if (item.history_type === "charging") {
+
+                section.appendChild(
+                    createChargingCard(item.data)
+                );
+
+            } else {
+
+                section.appendChild(
+                    createTripCard(item.data)
+                );
+            }
+        });
+
+
+        container.appendChild(section);
+    });
+}
+
+
+/*
+ * ============================================================
+ * TRIP CARD
+ * ============================================================
+ */
+
+function createTripCard(trip) {
+
+    const card =
+        document.createElement(
+            "article"
+        );
+
+
+    card.className =
+        "trip";
+
+
+    /*
+     * Start-/Endzeit
+     */
+
+    const startDate =
+
+        trip.start_time
+
+            ? new Date(
+                trip.start_time
+            )
+
+            : null;
+
+
+    const endDate =
+
+        trip.end_time
+
+            ? new Date(
+                trip.end_time
+            )
+
+            : null;
+
+
+    /*
+     * Dauer:
+     *
+     * Wenn duration_seconds aus der DB vorhanden ist,
+     * verwenden wir diesen Wert.
+     *
+     * Dadurch funktioniert die Anzeige auch,
+     * wenn alte Datensätze kein start_time besitzen.
+     */
+
+    let durationSeconds =
+        Number(
+            trip.duration_seconds || 0
+        );
+
+
+    if (
+        durationSeconds <= 0 &&
+        startDate &&
+        endDate
+    ) {
+
+        durationSeconds =
+            (
+                endDate -
+                startDate
+            ) / 1000;
+    }
+
+
+    /*
+     * Batterie
+     */
+
+    const batteryUsed =
+
+        Number(
+            trip.used_battery_pct
+        )
+
+        ||
+
+        (
+            Number(
+                trip.start_battery_pct || 0
+            )
+
+            -
+
+            Number(
+                trip.end_battery_pct || 0
+            )
+        );
+
+
+const batteryStart =
+    Math.max(
+        0,
+        Math.min(
+            100,
+            Number(trip.start_battery_pct || 0)
+        )
+    );
+
+const batteryEnd =
+    Math.max(
+        0,
+        Math.min(
+            100,
+            Number(trip.end_battery_pct || 0)
+        )
+    );
+
+const batteryLeft =
+    Math.min(
+        batteryStart,
+        batteryEnd
+    );
+
+const batteryWidth =
+    Math.abs(
+        batteryStart -
+        batteryEnd
+    );
+
+const batteryDirection =
+    batteryEnd >= batteryStart
+        ? "charging"
+        : "discharging";
+    /*
+     * Ortsnamen nur für Anzeige aufbereiten.
+     *
+     * Die Originalwerte aus der DB bleiben unangetastet.
+     */
+
+    const startLocation =
+
+formatLocationName(
+    trip.start_location_name,
+    trip.start_street,
+    trip.start_house_number,
+    trip.start_city,
+    trip.start_country
+);
+
+    const endLocation =
+
+formatLocationName(
+    trip.end_location_name,
+    trip.end_street,
+    trip.end_house_number,
+    trip.end_city,
+    trip.end_country
+);
+
+    /*
+     * Zeit anzeigen
+     */
+
+    const startTime =
+
+        trip.start_time
+
+            ? formatTime(
+                trip.start_time
+            )
+
+            : "–";
+
+
+    const endTime =
+
+        trip.end_time
+
+            ? formatTime(
+                trip.end_time
+            )
+
+            : "–";
+
+
+    card.innerHTML = `
+
+        <div class="trip-main">
+
+            <div class="route">
+
+                <!-- ZIEL OBEN -->
+
+                <div class="location">
+
+                    <span class="dot"></span>
+
+                    <span class="location-name">
+                        ${endLocation}
+                    </span>
+
+                </div>
+
+
+                <div class="location-time">
+                    ${endTime}
+                </div>
+
+
+                <div class="route-line"></div>
+
+
+                <!-- START UNTEN -->
+
+                <div class="location">
+
+                    <span class="dot"></span>
+
+                    <span class="location-name">
+                        ${startLocation}
+                    </span>
+
+                </div>
+
+
+                <div class="location-time">
+                    ${startTime}
+                </div>
+
+            </div>
+
+
+            <div class="distance">
+
+                <div class="distance-value">
+
+                    ${formatNumber(
+                        trip.distance_km
+                    )}
+
+                </div>
+
+
+                <div class="distance-unit">
+                    KM
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="metrics">
+
+            <div class="metric">
+
+                <div class="metric-value">
+
+                    ${formatDuration(
+                        durationSeconds
+                    )}
+
+                </div>
+
+
+                <div class="metric-label">
+                    Dauer
+                </div>
+
+            </div>
+
+
+            <div class="metric">
+
+                <div class="metric-value">
+
+                    ${formatNumber(
+                        trip.avg_kwh_100km
+                    )}
+
+                </div>
+
+
+                <div class="metric-label">
+                    kWh / 100 km
+                </div>
+
+            </div>
+
+
+            <div class="metric">
+
+                <div class="metric-value">
+
+                    ${formatNumber(
+                        trip.avg_speed_kmh,
+                        0
+                    )}
+
+                </div>
+
+
+                <div class="metric-label">
+                    Ø km/h
+                </div>
+
+            </div>
+
+
+            <div class="metric">
+
+                <div class="metric-value">
+
+                    ${formatNumber(
+                        trip.consumed_kwh
+                    )}
+
+                </div>
+
+
+                <div class="metric-label">
+                    kWh
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="battery">
+
+            <div class="battery-header">
+
+                <span>
+                    BATTERIE
+                </span>
+
+
+                <span>
+
+                    ${formatNumber(
+                        trip.start_battery_pct,
+                        0
+                    )}
+                    %
+
+                    →
+
+                    ${formatNumber(
+                        trip.end_battery_pct,
+                        0
+                    )}
+                    %
+
+                    &nbsp;
+
+                    (${formatNumber(
+                        batteryUsed,
+                        1
+                    )} %)
+
+                </span>
+
+            </div>
+
+
+<div class="battery-bar">
+    <div
+        class="battery-range ${batteryDirection}"
+        style="left:${batteryLeft}%; width:${batteryWidth}%;"
+    ></div>
+</div>
+        </div>
+
+    `;
+
+
+    return card;
+}
+
+
+
+/*
+ * ============================================================
+ * CHARGING CARD
+ * ============================================================
+ */
+
+function createChargingCard(session) {
+
+    const card =
+        document.createElement("article");
+
+    const chargeType =
+        String(session.charge_type || "unknown")
+            .toUpperCase();
+
+    const typeClass =
+        chargeType === "DC"
+            ? "charge-dc"
+            : "charge-ac";
+
+    const batteryColor =
+        chargeType === "DC"
+            ? "#ffd43b"
+            : "#38c172";
+
+    const batteryGlow =
+        chargeType === "DC"
+            ? "rgba(255, 212, 59, 0.6)"
+            : "rgba(56, 193, 114, 0.6)";
+
+    card.className =
+        `trip charging-card ${typeClass}`;
+
+
+    const batteryStart =
+        Math.max(
+            0,
+            Math.min(
+                100,
+                Number(session.start_battery_pct || 0)
+            )
+        );
+
+    const batteryEnd =
+        Math.max(
+            0,
+            Math.min(
+                100,
+                Number(session.end_battery_pct || 0)
+            )
+        );
+
+    const batteryLeft =
+        Math.min(
+            batteryStart,
+            batteryEnd
+        );
+
+    const batteryWidth =
+        Math.abs(
+            batteryEnd - batteryStart
+        );
+
+
+    const startTime =
+        session.start_time
+            ? formatTime(session.start_time)
+            : "–";
+
+    const endTime =
+        session.end_time
+            ? formatTime(session.end_time)
+            : "–";
+
+
+    const chargedBatteryPct =
+        Number(session.charged_battery_pct || 0);
+
+
+    card.innerHTML = `
+
+        <div class="charge-main">
+
+            <div>
+                <div class="charge-heading">
+                    <span class="charge-dot"></span>
+                    <span>${chargeType} LADEN</span>
+                </div>
+
+                <div class="charge-time">
+                    ${startTime} → ${endTime}
+                </div>
+            </div>
+
+            <div class="charge-type">
+                ${chargeType}
+            </div>
+
+        </div>
+
+
+        <div class="metrics">
+
+            <div class="metric">
+                <div class="metric-value">
+                    ${formatDuration(session.duration_seconds)}
+                </div>
+                <div class="metric-label">
+                    Dauer
+                </div>
+            </div>
+
+            <div class="metric">
+                <div class="metric-value">
+                    ${formatNumber(session.charged_energy_kwh, 2)}
+                </div>
+                <div class="metric-label">
+                    kWh geladen
+                </div>
+            </div>
+
+            <div class="metric">
+                <div class="metric-value">
+                    ${formatNumber(session.max_power_kw, 1)}
+                </div>
+                <div class="metric-label">
+                    Max kW
+                </div>
+            </div>
+
+            <div class="metric">
+                <div class="metric-value">
+                    ${formatNumber(session.end_outside_temp_c, 1)}°
+                </div>
+                <div class="metric-label">
+                    Außen
+                </div>
+            </div>
+
+        </div>
+
+
+        <div class="battery">
+
+            <div class="battery-header">
+
+                <span>
+                    BATTERIE
+                </span>
+
+                <span>
+                    ${formatNumber(session.start_battery_pct, 0)} %
+                    →
+                    ${formatNumber(session.end_battery_pct, 0)} %
+                    &nbsp;
+                    (+${formatNumber(chargedBatteryPct, 1)} %)
+                </span>
+
+            </div>
+
+            <div class="battery-bar">
+                <div
+                    class="battery-range ${typeClass}"
+                    style="left:${batteryLeft}%; width:${batteryWidth}%; background:${batteryColor}; box-shadow:0 0 5px ${batteryGlow};"
+                ></div>
+            </div>
+
+        </div>
+    `;
+
+
+    if (session.session_id) {
+        const curveSection = document.createElement("div");
+        curveSection.className = "charge-curve-section";
+        curveSection.innerHTML = `
+            <button type="button" class="charge-curve-toggle" aria-expanded="false">
+                <span>Ladekurve anzeigen</span>
+                <span class="charge-curve-chevron">⌄</span>
+            </button>
+            <div class="charge-curve-content" hidden>
+                <div class="charge-curve-message">Ladekurve wird geladen ...</div>
+            </div>
+        `;
+        card.appendChild(curveSection);
+
+        const toggle = curveSection.querySelector(".charge-curve-toggle");
+        const content = curveSection.querySelector(".charge-curve-content");
+
+        toggle.addEventListener("click", async () => {
+            const open = toggle.getAttribute("aria-expanded") === "true";
+            if (open) {
+                toggle.setAttribute("aria-expanded", "false");
+                toggle.querySelector("span").textContent = "Ladekurve anzeigen";
+                content.hidden = true;
+                return;
+            }
+
+            toggle.setAttribute("aria-expanded", "true");
+            toggle.querySelector("span").textContent = "Ladekurve ausblenden";
+            content.hidden = false;
+            if (content.dataset.loaded === "true") return;
+
+            try {
+                const response = await fetch(
+                    `${CHARGING_CURVE_API_URL}?session_id=${encodeURIComponent(session.session_id)}`,
+                    { cache: "no-store" }
+                );
+                if (!response.ok) throw new Error(`Curve API HTTP ${response.status}`);
+                const data = await response.json();
+                renderChargeCurve(content, Array.isArray(data.points) ? data.points : [], chargeType);
+                content.dataset.loaded = "true";
+            } catch (error) {
+                console.error("Charging Curve API Fehler:", error);
+                content.innerHTML = `<div class="charge-curve-message">Ladekurve konnte nicht geladen werden.</div>`;
+            }
+        });
+    }
+
+
+    return card;
+}
+
+
+/*
+ * ============================================================
+ * LADEKURVE
+ * ============================================================
+ */
+
+function renderChargeCurve(container, rawPoints, chargeType) {
+    const points = rawPoints
+        .map(p => ({ soc:Number(p.soc_pct), kw:Number(p.power_kw), elapsed:Number(p.elapsed_seconds) }))
+        .filter(p => Number.isFinite(p.soc) && Number.isFinite(p.kw))
+        .sort((a,b) => a.elapsed-b.elapsed);
+
+    if (points.length < 2) {
+        container.innerHTML = `<div class="charge-curve-message">Noch nicht genügend Daten für eine Ladekurve.</div>`;
+        return;
+    }
+
+    const W=900, H=300, P={l:58,r:22,t:22,b:42};
+    const pw=W-P.l-P.r, ph=H-P.t-P.b;
+
+    let minSoc=Math.floor(Math.min(...points.map(p=>p.soc)));
+    let maxSoc=Math.ceil(Math.max(...points.map(p=>p.soc)));
+    if (maxSoc-minSoc < 5) {
+        const c=(minSoc+maxSoc)/2;
+        minSoc=Math.max(0,Math.floor(c-2.5));
+        maxSoc=Math.min(100,Math.ceil(c+2.5));
+    }
+    if (maxSoc<=minSoc) maxSoc=Math.min(100,minSoc+1);
+
+    const measuredMax=Math.max(...points.map(p=>p.kw),1);
+    const yStep=measuredMax<=25?5:measuredMax<=100?20:50;
+    const maxKw=Math.ceil(measuredMax/yStep)*yStep;
+
+    const x=s=>P.l+((s-minSoc)/(maxSoc-minSoc))*pw;
+    const y=k=>P.t+ph-(Math.max(0,k)/maxKw)*ph;
+    const color=chargeType==="DC"?"#ffd43b":"#38c172";
+    const path=points.map((p,i)=>`${i?"L":"M"} ${x(p.soc).toFixed(2)} ${y(p.kw).toFixed(2)}`).join(" ");
+
+    let grid="";
+    for(let v=0;v<=maxKw;v+=yStep){
+        const yy=y(v);
+        grid+=`<line x1="${P.l}" y1="${yy}" x2="${W-P.r}" y2="${yy}" class="curve-grid-line"/>
+        <text x="${P.l-10}" y="${yy+4}" text-anchor="end" class="curve-axis-text">${v}</text>`;
+    }
+
+    const span=maxSoc-minSoc, xStep=span<=10?2:span<=30?5:10;
+    for(let v=Math.ceil(minSoc/xStep)*xStep;v<=maxSoc;v+=xStep){
+        const xx=x(v);
+        grid+=`<line x1="${xx}" y1="${P.t}" x2="${xx}" y2="${H-P.b}" class="curve-grid-line curve-grid-line-vertical"/>
+        <text x="${xx}" y="${H-15}" text-anchor="middle" class="curve-axis-text">${v}%</text>`;
+    }
+
+    const peak=points.reduce((a,p)=>p.kw>a.kw?p:a,points[0]);
+
+    container.innerHTML=`
+        <div class="charge-curve-summary">
+            <span>${points.length} Messpunkte</span>
+            <span>Peak ${formatNumber(peak.kw,1)} kW bei ${formatNumber(peak.soc,1)} %</span>
+        </div>
+        <div class="charge-curve-chart">
+            <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ladekurve">
+                ${grid}
+                <line x1="${P.l}" y1="${P.t}" x2="${P.l}" y2="${H-P.b}" class="curve-axis-line"/>
+                <line x1="${P.l}" y1="${H-P.b}" x2="${W-P.r}" y2="${H-P.b}" class="curve-axis-line"/>
+                <text x="16" y="${P.t+ph/2}" transform="rotate(-90 16 ${P.t+ph/2})" text-anchor="middle" class="curve-axis-label">kW</text>
+                <text x="${P.l+pw/2}" y="${H-2}" text-anchor="middle" class="curve-axis-label">SOC</text>
+                <path d="${path}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+            </svg>
+        </div>`;
+}
+
+
+/*
+ * ============================================================
+ * DATEN LADEN
+ * ============================================================
+ */
+
+async function loadHistory() {
+
+    document.getElementById(
+        "tripContainer"
+    ).innerHTML = `
+        <div class="message">
+            Lade Fahrten und Ladevorgänge ...
+        </div>
+    `;
+
+
+    try {
+
+        const encodedDays =
+            encodeURIComponent(selectedDays);
+
+        const tripUrl =
+            `${API_URL}?days=${encodedDays}`;
+
+        const chargingUrl =
+            `${CHARGING_API_URL}?days=${encodedDays}`;
+
+
+        const [tripResponse, chargingResponse] =
+            await Promise.all([
+                fetch(tripUrl, { cache: "no-store" }),
+                fetch(chargingUrl, { cache: "no-store" })
+            ]);
+
+
+        if (!tripResponse.ok) {
+            throw new Error(
+                `Trip API HTTP ${tripResponse.status}`
+            );
+        }
+
+        if (!chargingResponse.ok) {
+            throw new Error(
+                `Charging API HTTP ${chargingResponse.status}`
+            );
+        }
+
+
+        const tripData =
+            await tripResponse.json();
+
+        const chargingData =
+            await chargingResponse.json();
+
+
+        const trips =
+            Array.isArray(tripData)
+                ? tripData
+                : (tripData.trips || []);
+
+        const chargingSessions =
+            Array.isArray(chargingData)
+                ? chargingData
+                : (chargingData.charging_sessions || []);
+
+
+        renderHistory(
+            trips,
+            chargingSessions
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "History API Fehler:",
+            error
+        );
+
+
+        document.getElementById(
+            "totalTrips"
+        ).textContent = "–";
+
+        document.getElementById(
+            "totalDistance"
+        ).textContent = "–";
+
+        document.getElementById(
+            "averageConsumption"
+        ).textContent = "–";
+
+
+        document.getElementById(
+            "tripContainer"
+        ).innerHTML = `
+            <div class="message">
+                Fahrten und Ladevorgänge konnten nicht geladen werden.
+            </div>
+        `;
+    }
+}
+
+
+/*
+ * ============================================================
+ * ZEITRAUM ÄNDERN
+ * ============================================================
+ */
+
+const rangeSelect =
+    document.getElementById(
+        "rangeSelect"
+    );
+
+
+rangeSelect.addEventListener(
+    "change",
+    function () {
+
+        selectedDays =
+            rangeSelect.value;
+
+
+        loadHistory();
+    }
+);
+
+
+/*
+ * ============================================================
+ * START
+ * ============================================================
+ */
+
+loadHistory();
+
+</script>
+
+</body>
+</html>
