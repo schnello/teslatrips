@@ -8,6 +8,12 @@
     <link rel="icon" type="image/png" href="tesla.png">
 
     <link rel="stylesheet" href="trips.css?v=20260823-2">
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""
+    >
 
     <style>
         /*
@@ -148,33 +154,17 @@
         }
 
         .trip-map-canvas {
-            display: block;
             width: 100%;
             height: 220px;
             border-radius: 8px;
-            background:
-                linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px),
-                #090909;
-            background-size: 24px 24px;
+            overflow: hidden;
+            background: #090909;
         }
 
-        .trip-map-line {
-            stroke: var(--bright-red);
-            stroke-width: 3;
-            stroke-dasharray: 7 5;
+        .trip-map-canvas[hidden] {
+            display: none;
         }
 
-        .trip-map-point {
-            fill: #000;
-            stroke: var(--bright-red);
-            stroke-width: 3;
-        }
-
-        .trip-map-label {
-            fill: #fff;
-            font-size: 12px;
-        }
     </style>
 </head>
 
@@ -314,6 +304,12 @@
 
 </main>
 
+
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
 
 <script>
 
@@ -1130,29 +1126,14 @@ formatLocationName(
     const startCoordinates = getTripCoordinates(trip, "start");
     const endCoordinates = getTripCoordinates(trip, "end");
     const hasMap = startCoordinates && endCoordinates;
-    const latitudeDifference = hasMap
-        ? endCoordinates.latitude - startCoordinates.latitude
-        : 0;
-    const longitudeDifference = hasMap
-        ? endCoordinates.longitude - startCoordinates.longitude
-        : 0;
-    const mapEndX = 210 + Math.max(-130, Math.min(130, longitudeDifference * 1800));
-    const mapEndY = 110 - Math.max(-70, Math.min(70, latitudeDifference * 1800));
     const mapMarkup = hasMap
         ? `
             <div class="trip-map">
                 <div class="trip-map-header">
-                    <span>Schematische Route</span>
+                    <span>Start und Ziel</span>
                     <button type="button" class="trip-map-toggle" aria-expanded="false">Karte anzeigen</button>
                 </div>
-                <svg class="trip-map-canvas" viewBox="0 0 420 220" role="img" aria-label="Start- und Zielposition" hidden>
-                    <line class="trip-map-line" x1="210" y1="110" x2="${mapEndX}" y2="${mapEndY}"></line>
-                    <circle class="trip-map-point" cx="210" cy="110" r="7"></circle>
-                    <circle class="trip-map-point" cx="${mapEndX}" cy="${mapEndY}" r="7"></circle>
-                    <text class="trip-map-label" x="210" y="95" text-anchor="middle">Start</text>
-                    <text class="trip-map-label" x="${mapEndX}" y="${mapEndY - 15}" text-anchor="middle">Ziel</text>
-                    <text class="trip-map-label" x="400" y="20" text-anchor="end">N ↑</text>
-                </svg>
+                <div class="trip-map-canvas" role="img" aria-label="Karte mit Start- und Zielposition" hidden></div>
             </div>
         `
         : "";
@@ -1359,6 +1340,34 @@ formatLocationName(
             mapCanvas.hidden = !willOpen;
             mapToggle.setAttribute("aria-expanded", String(willOpen));
             mapToggle.textContent = willOpen ? "Karte schließen" : "Karte anzeigen";
+
+            if (willOpen && !mapCanvas._leafletMap) {
+                if (typeof L === "undefined") {
+                    mapCanvas.textContent = "Kartenbibliothek konnte nicht geladen werden.";
+                    return;
+                }
+
+                const startPoint = [startCoordinates.latitude, startCoordinates.longitude];
+                const endPoint = [endCoordinates.latitude, endCoordinates.longitude];
+                const map = L.map(mapCanvas, { scrollWheelZoom: false });
+
+                L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                    maxZoom: 19,
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                }).addTo(map);
+
+                L.marker(startPoint).addTo(map).bindTooltip("Start");
+                L.marker(endPoint).addTo(map).bindTooltip("Ziel");
+                map.fitBounds([startPoint, endPoint], {
+                    padding: [35, 35],
+                    maxZoom: 16
+                });
+
+                mapCanvas._leafletMap = map;
+                setTimeout(() => map.invalidateSize(), 0);
+            } else if (willOpen) {
+                setTimeout(() => mapCanvas._leafletMap.invalidateSize(), 0);
+            }
         });
     }
 
