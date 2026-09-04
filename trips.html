@@ -68,6 +68,16 @@
             outline: none;
             border-color: rgba(255, 255, 255, 0.6);
         }
+
+        .stats {
+            grid-template-columns: repeat(4, 1fr);
+        }
+
+        @media (max-width: 600px) {
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
     </style>
 </head>
 
@@ -157,6 +167,20 @@
 
             <div class="stat-label">
                 Ø kWh / 100 km
+            </div>
+        </div>
+
+
+        <div class="stat">
+            <div
+                class="stat-value"
+                id="distanceSinceLastCharge"
+            >
+                –
+            </div>
+
+            <div class="stat-label">
+                km seit letzter Ladung
             </div>
         </div>
 
@@ -521,6 +545,41 @@ function renderHistory(trips, chargingSessions) {
             ? (totalEnergy / totalDistance) * 100
             : 0;
 
+    const latestChargingTime =
+        safeChargingSessions.reduce(
+            (latest, session) => {
+                const timestamp = new Date(
+                    session.end_time ||
+                    session.start_time ||
+                    0
+                ).getTime();
+
+                return Number.isFinite(timestamp)
+                    ? Math.max(latest, timestamp)
+                    : latest;
+            },
+            0
+        );
+
+    const distanceSinceLastCharge =
+        latestChargingTime > 0
+            ? safeTrips.reduce(
+                (sum, trip) => {
+                    const tripTime = new Date(
+                        trip.end_time ||
+                        trip.start_time ||
+                        0
+                    ).getTime();
+
+                    return Number.isFinite(tripTime) &&
+                        tripTime > latestChargingTime
+                            ? sum + Number(trip.distance_km || 0)
+                            : sum;
+                },
+                0
+            )
+            : null;
+
 
     document.getElementById(
         "totalTrips"
@@ -536,6 +595,13 @@ function renderHistory(trips, chargingSessions) {
         "averageConsumption"
     ).textContent =
         formatNumber(averageConsumption);
+
+    document.getElementById(
+        "distanceSinceLastCharge"
+    ).textContent =
+        distanceSinceLastCharge === null
+            ? "–"
+            : formatNumber(distanceSinceLastCharge);
 
 
     // ========================================================
@@ -1420,6 +1486,10 @@ async function loadHistory() {
 
         document.getElementById(
             "averageConsumption"
+        ).textContent = "–";
+
+        document.getElementById(
+            "distanceSinceLastCharge"
         ).textContent = "–";
 
 
