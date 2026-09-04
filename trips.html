@@ -78,6 +78,103 @@
                 grid-template-columns: repeat(2, 1fr);
             }
         }
+
+        .consumption-trend {
+            margin: -18px 0 35px;
+            padding: 18px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            backdrop-filter: blur(8px);
+        }
+
+        .consumption-trend-header,
+        .trip-map-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+            color: var(--muted);
+            font-size: 0.65rem;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .consumption-chart {
+            display: block;
+            width: 100%;
+            height: 150px;
+            overflow: visible;
+        }
+
+        .consumption-chart-grid {
+            stroke: rgba(255, 255, 255, 0.1);
+            stroke-width: 1;
+        }
+
+        .consumption-chart-line {
+            fill: none;
+            stroke: var(--bright-red);
+            stroke-width: 3;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            filter: drop-shadow(0 0 5px rgba(255, 26, 26, 0.65));
+        }
+
+        .consumption-chart-dot {
+            fill: #000;
+            stroke: var(--bright-red);
+            stroke-width: 2;
+        }
+
+        .consumption-chart-label {
+            fill: var(--muted);
+            font-size: 10px;
+        }
+
+        .trip-map {
+            padding: 15px 20px 18px;
+            border-top: 1px solid rgba(255,255,255,0.07);
+        }
+
+        .trip-map-toggle {
+            padding: 7px 10px;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .trip-map-canvas {
+            display: block;
+            width: 100%;
+            height: 220px;
+            border-radius: 8px;
+            background:
+                linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px),
+                #090909;
+            background-size: 24px 24px;
+        }
+
+        .trip-map-line {
+            stroke: var(--bright-red);
+            stroke-width: 3;
+            stroke-dasharray: 7 5;
+        }
+
+        .trip-map-point {
+            fill: #000;
+            stroke: var(--bright-red);
+            stroke-width: 3;
+        }
+
+        .trip-map-label {
+            fill: #fff;
+            font-size: 12px;
+        }
     </style>
 </head>
 
@@ -186,6 +283,17 @@
 
     </section>
 
+    <section
+        class="consumption-trend"
+        id="consumptionTrend"
+    >
+        <div class="consumption-trend-header">
+            <span>Verbrauch pro Tag</span>
+            <span>–</span>
+        </div>
+        <div class="message">Lade Verbrauchskurve ...</div>
+    </section>
+
 
     <!-- =====================================================
          TRIPS
@@ -232,6 +340,7 @@ const CHARGING_CURVE_API_URL =
  */
 
 let selectedDays = "31";
+let allHistoryPromise = null;
 
 
 /*
@@ -497,13 +606,122 @@ function formatNumber(
 }
 
 
+function getTripCoordinates(trip, prefix) {
+    const rawLatitude =
+        trip[`${prefix}_latitude`] ??
+        trip[`${prefix}_lat`] ??
+        trip[`${prefix}_location_latitude`] ??
+        trip[`${prefix}_location_lat`];
+
+    const rawLongitude =
+        trip[`${prefix}_longitude`] ??
+        trip[`${prefix}_lon`] ??
+        trip[`${prefix}_lng`] ??
+        trip[`${prefix}_location_longitude`] ??
+        trip[`${prefix}_location_lon`];
+
+    if (rawLatitude === null || rawLatitude === undefined || rawLatitude === "" ||
+        rawLongitude === null || rawLongitude === undefined || rawLongitude === "") {
+        return null;
+    }
+
+    const latitude = Number(rawLatitude);
+    const longitude = Number(rawLongitude);
+
+    return Number.isFinite(latitude) &&
+        Number.isFinite(longitude) &&
+        Math.abs(latitude) <= 90 &&
+        Math.abs(longitude) <= 180
+            ? { latitude, longitude }
+            : null;
+}
+
+
+function renderConsumptionTrend(trips) {
+    const container = document.getElementById("consumptionTrend");
+    const daily = new Map();
+
+    trips.forEach(trip => {
+        const date = new Date(trip.end_time || trip.start_time || 0);
+        const distance = Number(trip.distance_km || 0);
+        const energy = Number(trip.consumed_kwh || 0);
+
+        if (!Number.isFinite(date.getTime()) || distance <= 0 || energy < 0) {
+            return;
+        }
+
+        const key = date.toLocaleDateString("sv-SE");
+        const current = daily.get(key) || { date, distance: 0, energy: 0 };
+        current.distance += distance;
+        current.energy += energy;
+        daily.set(key, current);
+    });
+
+    const points = Array.from(daily.values())
+        .sort((a, b) => a.date - b.date)
+        .slice(-14)
+        .map(point => ({
+            ...point,
+            consumption: (point.energy / point.distance) * 100
+        }));
+
+    if (points.length === 0) {
+        container.innerHTML = `
+            <div class="consumption-trend-header"><span>Verbrauch pro Tag</span><span>–</span></div>
+            <div class="message">Keine Verbrauchsdaten vorhanden.</div>
+        `;
+        return;
+    }
+
+    const width = 760;
+    const height = 130;
+    const padding = { top: 12, right: 18, bottom: 24, left: 38 };
+    const values = points.map(point => point.consumption);
+    const minValue = Math.max(0, Math.floor(Math.min(...values) - 2));
+    const maxValue = Math.ceil(Math.max(...values) + 2);
+    const valueRange = Math.max(1, maxValue - minValue);
+    const x = index => padding.left +
+        (points.length === 1
+            ? (width - padding.left - padding.right) / 2
+            : index * (width - padding.left - padding.right) / (points.length - 1));
+    const y = value => padding.top +
+        (maxValue - value) * (height - padding.top - padding.bottom) / valueRange;
+    const path = points.map((point, index) =>
+        `${index === 0 ? "M" : "L"} ${x(index).toFixed(2)} ${y(point.consumption).toFixed(2)}`
+    ).join(" ");
+    const firstDate = points[0].date.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" });
+    const lastDate = points[points.length - 1].date.toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" });
+
+    container.innerHTML = `
+        <div class="consumption-trend-header">
+            <span>Verbrauch pro Tag</span>
+            <span>${formatNumber(values[values.length - 1])} kWh / 100 km</span>
+        </div>
+        <svg class="consumption-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Verbrauchskurve der letzten Tage">
+            <line class="consumption-chart-grid" x1="${padding.left}" y1="${y(maxValue)}" x2="${width - padding.right}" y2="${y(maxValue)}"></line>
+            <line class="consumption-chart-grid" x1="${padding.left}" y1="${y(minValue)}" x2="${width - padding.right}" y2="${y(minValue)}"></line>
+            <text class="consumption-chart-label" x="0" y="${y(maxValue) + 4}">${formatNumber(maxValue, 0)}</text>
+            <text class="consumption-chart-label" x="0" y="${y(minValue) + 4}">${formatNumber(minValue, 0)}</text>
+            <path class="consumption-chart-line" d="${path}"></path>
+            ${points.map((point, index) => `
+                <circle class="consumption-chart-dot" cx="${x(index)}" cy="${y(point.consumption)}" r="4">
+                    <title>${point.date.toLocaleDateString("de-AT")}: ${formatNumber(point.consumption)} kWh / 100 km</title>
+                </circle>
+            `).join("")}
+            <text class="consumption-chart-label" x="${padding.left}" y="${height - 3}">${firstDate}</text>
+            <text class="consumption-chart-label" x="${width - padding.right}" y="${height - 3}" text-anchor="end">${lastDate}</text>
+        </svg>
+    `;
+}
+
+
 /*
  * ============================================================
  * TRIPS RENDERN
  * ============================================================
  */
 
-function renderHistory(trips, chargingSessions) {
+function renderHistory(trips, chargingSessions, allTrips, allChargingSessions) {
 
     const container =
         document.getElementById(
@@ -545,8 +763,13 @@ function renderHistory(trips, chargingSessions) {
             ? (totalEnergy / totalDistance) * 100
             : 0;
 
+    const completeTrips = Array.isArray(allTrips) ? allTrips : safeTrips;
+    const completeChargingSessions = Array.isArray(allChargingSessions)
+        ? allChargingSessions
+        : safeChargingSessions;
+
     const latestChargingTime =
-        safeChargingSessions.reduce(
+        completeChargingSessions.reduce(
             (latest, session) => {
                 const timestamp = new Date(
                     session.end_time ||
@@ -563,7 +786,7 @@ function renderHistory(trips, chargingSessions) {
 
     const distanceSinceLastCharge =
         latestChargingTime > 0
-            ? safeTrips.reduce(
+            ? completeTrips.reduce(
                 (sum, trip) => {
                     const tripTime = new Date(
                         trip.end_time ||
@@ -602,6 +825,8 @@ function renderHistory(trips, chargingSessions) {
         distanceSinceLastCharge === null
             ? "–"
             : formatNumber(distanceSinceLastCharge);
+
+    renderConsumptionTrend(safeTrips);
 
 
     // ========================================================
@@ -902,6 +1127,36 @@ formatLocationName(
 
             : "–";
 
+    const startCoordinates = getTripCoordinates(trip, "start");
+    const endCoordinates = getTripCoordinates(trip, "end");
+    const hasMap = startCoordinates && endCoordinates;
+    const latitudeDifference = hasMap
+        ? endCoordinates.latitude - startCoordinates.latitude
+        : 0;
+    const longitudeDifference = hasMap
+        ? endCoordinates.longitude - startCoordinates.longitude
+        : 0;
+    const mapEndX = 210 + Math.max(-130, Math.min(130, longitudeDifference * 1800));
+    const mapEndY = 110 - Math.max(-70, Math.min(70, latitudeDifference * 1800));
+    const mapMarkup = hasMap
+        ? `
+            <div class="trip-map">
+                <div class="trip-map-header">
+                    <span>Schematische Route</span>
+                    <button type="button" class="trip-map-toggle" aria-expanded="false">Karte anzeigen</button>
+                </div>
+                <svg class="trip-map-canvas" viewBox="0 0 420 220" role="img" aria-label="Start- und Zielposition" hidden>
+                    <line class="trip-map-line" x1="210" y1="110" x2="${mapEndX}" y2="${mapEndY}"></line>
+                    <circle class="trip-map-point" cx="210" cy="110" r="7"></circle>
+                    <circle class="trip-map-point" cx="${mapEndX}" cy="${mapEndY}" r="7"></circle>
+                    <text class="trip-map-label" x="210" y="95" text-anchor="middle">Start</text>
+                    <text class="trip-map-label" x="${mapEndX}" y="${mapEndY - 15}" text-anchor="middle">Ziel</text>
+                    <text class="trip-map-label" x="400" y="20" text-anchor="end">N ↑</text>
+                </svg>
+            </div>
+        `
+        : "";
+
 
     card.innerHTML = `
 
@@ -1092,7 +1347,20 @@ formatLocationName(
 </div>
         </div>
 
+        ${mapMarkup}
+
     `;
+
+    const mapToggle = card.querySelector(".trip-map-toggle");
+    if (mapToggle) {
+        mapToggle.addEventListener("click", () => {
+            const mapCanvas = card.querySelector(".trip-map-canvas");
+            const willOpen = mapCanvas.hidden;
+            mapCanvas.hidden = !willOpen;
+            mapToggle.setAttribute("aria-expanded", String(willOpen));
+            mapToggle.textContent = willOpen ? "Karte schließen" : "Karte anzeigen";
+        });
+    }
 
 
     return card;
@@ -1424,10 +1692,34 @@ async function loadHistory() {
             `${CHARGING_API_URL}?days=${encodedDays}`;
 
 
-        const [tripResponse, chargingResponse] =
+        if (!allHistoryPromise) {
+            allHistoryPromise = Promise.all([
+                fetch(`${API_URL}?days=all`, { cache: "no-store" }),
+                fetch(`${CHARGING_API_URL}?days=all`, { cache: "no-store" })
+            ]).then(async ([allTripResponse, allChargingResponse]) => {
+                if (!allTripResponse.ok || !allChargingResponse.ok) {
+                    throw new Error("Vollständige History konnte nicht geladen werden");
+                }
+
+                const allTripData = await allTripResponse.json();
+                const allChargingData = await allChargingResponse.json();
+                return {
+                    trips: Array.isArray(allTripData) ? allTripData : (allTripData.trips || []),
+                    chargingSessions: Array.isArray(allChargingData)
+                        ? allChargingData
+                        : (allChargingData.charging_sessions || [])
+                };
+            }).catch(error => {
+                console.error("Vollständige History konnte nicht geladen werden:", error);
+                return null;
+            });
+        }
+
+        const [tripResponse, chargingResponse, completeHistory] =
             await Promise.all([
                 fetch(tripUrl, { cache: "no-store" }),
-                fetch(chargingUrl, { cache: "no-store" })
+                fetch(chargingUrl, { cache: "no-store" }),
+                allHistoryPromise
             ]);
 
 
@@ -1464,7 +1756,9 @@ async function loadHistory() {
 
         renderHistory(
             trips,
-            chargingSessions
+            chargingSessions,
+            completeHistory?.trips,
+            completeHistory?.chargingSessions
         );
 
 
@@ -1491,6 +1785,10 @@ async function loadHistory() {
         document.getElementById(
             "distanceSinceLastCharge"
         ).textContent = "–";
+
+        document.getElementById(
+            "consumptionTrend"
+        ).innerHTML = `<div class="message">Verbrauchskurve konnte nicht geladen werden.</div>`;
 
 
         document.getElementById(
