@@ -4,14 +4,14 @@ Privates, responsives Web-Dashboard für die Fahrten- und Ladehistorie eines Tes
 
 ## Funktionen
 
-- Zeitraumfilter für 1, 7, 14, 31, 90 und 365 Tage sowie alle Daten
+- Streckenfilter für die letzten 50, 300 oder 600 km sowie eine unbegrenzte Ansicht (Standard: 300 km)
 - Gesamtzahl der Fahrten, gefahrene Kilometer und Durchschnittsverbrauch
-- Kilometer seit der letzten Ladung, unabhängig vom gewählten Zeitraum
-- Verbrauchskurve pro Tag für die letzten maximal 14 Tage im ausgewählten Zeitraum
+- Kilometer seit der letzten Ladung, unabhängig von der gewählten Strecke
+- Verbrauchskurve pro Tag für die letzten maximal 14 Tage innerhalb der gewählten Strecke
 - Fahrtdetails mit Dauer, Verbrauch, Geschwindigkeit, Energie und Batterieverlauf
 - Gemeinsame chronologische Darstellung von Fahrten und AC-/DC-Ladevorgängen
 - Aufklappbare Ladekurven
-- Aufklappbare Leaflet-/OpenStreetMap-Karten mit Start- und Zielmarker
+- Aufklappbare Leaflet-/OpenStreetMap-Karten mit Start-, Zielmarker und tatsächlich aufgezeichneter Route
 - Responsive Darstellung für Desktop und Mobilgeräte
 
 ## Dateien
@@ -79,11 +79,19 @@ GET /api/tesla/charging/curve?session_id=<ID>
 
 Erwartet wird ein Objekt mit einem `points`-Array. Die Kurve wird erst beim Aufklappen des Ladevorgangs geladen.
 
+### Fahrtroute
+
+```http
+GET /api/tesla/trips/route?trip_id=<TRIP_ID>
+```
+
+Erwartet wird ein Objekt mit `trip_id`, `count` und einem nach `point_index` geordneten `points`-Array. Die Route wird erst beim Aufklappen der betreffenden Fahrt geladen.
+
 ## Kilometer seit der letzten Ladung
 
-Zusätzlich zum ausgewählten Zeitraum lädt die Seite Fahrten und Ladevorgänge einmal mit `days=all`. Aus allen Fahrten nach dem Ende des jüngsten Ladevorgangs wird die gefahrene Distanz berechnet.
+Die Seite lädt Fahrten und Ladevorgänge einmal mit `days=all` und begrenzt die Anzeige anschließend lokal auf die ausgewählte Fahrstrecke. Aus allen Fahrten nach dem Ende des jüngsten Ladevorgangs wird die gefahrene Distanz berechnet.
 
-Falls die vollständige Abfrage fehlschlägt, verwendet die Seite als Fallback die Daten des aktuell ausgewählten Zeitraums.
+Falls die vollständige Abfrage fehlschlägt, zeigt die Seite eine Fehlermeldung an.
 
 ## Karten
 
@@ -127,20 +135,20 @@ Die Fahrtzusammenfassungen werden im Measurement `tesla_trip_v3` gespeichert.
 
 ## Routenaufzeichnung
 
-Die Node-RED-Trip-Funktion wurde für eine Aufzeichnung der Position im Abstand von 30 Sekunden vorbereitet. Die Punkte werden für jede Fahrt über `trip_id` gruppiert und sollen im separaten Measurement `tesla_trip_route_v1` gespeichert werden.
+Die Node-RED-Trip-Funktion zeichnet die Position während einer Fahrt im Abstand von 30 Sekunden auf. Die Punkte werden über `trip_id` gruppiert und im separaten Measurement `tesla_trip_route_v1` gespeichert.
 
 Aktueller Stand:
 
-- Sammeln der Punkte während einer Fahrt ist vorbereitet
-- Schreiben nach `tesla_trip_route_v1` ist vorbereitet
-- Praxistest bei einer abgeschlossenen Fahrt steht noch aus
-- API-Endpunkt zum Lesen einer Route fehlt noch
-- Die Webseite zeigt momentan Start und Ziel, aber noch nicht die tatsächlich gefahrene Linie
+- Sammeln der Punkte während einer Fahrt funktioniert
+- Schreiben nach `tesla_trip_route_v1` funktioniert
+- Der Route-Endpunkt liefert die Punkte einer Fahrt anhand ihrer `trip_id`
+- Die Webseite lädt die Route beim Öffnen der Karte
+- Die tatsächlich aufgezeichnete Strecke wird als blaue Leaflet-Linie dargestellt
 
-Der geplante Endpunkt lautet beispielsweise:
+Der Endpunkt lautet:
 
 ```http
 GET /api/tesla/trips/route?trip_id=<TRIP_ID>
 ```
 
-Sobald dieser Endpunkt vorhanden ist, kann `trips.html` die Routenpunkte beim Öffnen der Karte laden und als Leaflet-Polyline darstellen.
+Fahrten ohne gespeicherte Routenpunkte zeigen weiterhin nur Start- und Zielmarker.

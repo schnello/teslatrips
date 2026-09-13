@@ -17,7 +17,7 @@
 
     <style>
         /*
-         * Zeitraum-Auswahl
+         * Strecken-Auswahl
          *
          * Absichtlich hier im HTML, damit trips.css
          * zunächst nicht geändert werden muss.
@@ -165,6 +165,27 @@
             display: none;
         }
 
+        .trip-map-marker {
+            display: grid;
+            place-items: center;
+            width: 24px;
+            height: 24px;
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        }
+
+        .trip-map-marker--start {
+            background: #16a34a;
+        }
+
+        .trip-map-marker--end {
+            background: #dc2626;
+        }
+
     </style>
 </head>
 
@@ -182,7 +203,7 @@
 
 
     <!-- =====================================================
-         ZEITRAUM
+         STRECKE
          ===================================================== -->
 
     <div class="range-bar">
@@ -191,20 +212,17 @@
             class="range-label"
             for="rangeSelect"
         >
-            Zeitraum
+            Strecke
         </label>
 
         <select
             id="rangeSelect"
             class="range-select"
         >
-            <option value="1">1 Tag</option>
-            <option value="7">7 Tage</option>
-            <option value="14">14 Tage</option>
-            <option value="31" selected>31 Tage</option>
-            <option value="90">90 Tage</option>
-            <option value="365">1 Jahr</option>
-            <option value="all">Alle</option>
+            <option value="50">50 km</option>
+            <option value="300" selected>300 km</option>
+            <option value="600">600 km</option>
+            <option value="all">Unbegrenzt</option>
         </select>
 
     </div>
@@ -322,6 +340,9 @@
 const API_URL =
     "/api/tesla/trips";
 
+const TRIP_ROUTE_API_URL =
+    "/api/tesla/trips/route";
+
 const CHARGING_API_URL =
     "/api/tesla/charging";
 
@@ -331,11 +352,11 @@ const CHARGING_CURVE_API_URL =
 
 /*
  * ============================================================
- * ZEITRAUM
+ * STRECKE
  * ============================================================
  */
 
-let selectedDays = "31";
+let selectedDistanceKm = 300;
 let allHistoryPromise = null;
 
 
@@ -1125,12 +1146,13 @@ formatLocationName(
 
     const startCoordinates = getTripCoordinates(trip, "start");
     const endCoordinates = getTripCoordinates(trip, "end");
+    const tripId = trip.start_time_ms ?? null;
     const hasMap = startCoordinates && endCoordinates;
     const mapMarkup = hasMap
         ? `
             <div class="trip-map">
                 <div class="trip-map-header">
-                    <span>Start und Ziel</span>
+                    <span class="trip-map-title">Start und Ziel</span>
                     <button type="button" class="trip-map-toggle" aria-expanded="false">Karte anzeigen</button>
                 </div>
                 <div class="trip-map-canvas" role="img" aria-label="Karte mit Start- und Zielposition" hidden></div>
@@ -1334,8 +1356,9 @@ formatLocationName(
 
     const mapToggle = card.querySelector(".trip-map-toggle");
     if (mapToggle) {
-        mapToggle.addEventListener("click", () => {
+        mapToggle.addEventListener("click", async () => {
             const mapCanvas = card.querySelector(".trip-map-canvas");
+            const mapTitle = card.querySelector(".trip-map-title");
             const willOpen = mapCanvas.hidden;
             mapCanvas.hidden = !willOpen;
             mapToggle.setAttribute("aria-expanded", String(willOpen));
@@ -1356,17 +1379,99 @@ formatLocationName(
                     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 }).addTo(map);
 
-                L.marker(startPoint).addTo(map).bindTooltip("Start");
-                L.marker(endPoint).addTo(map).bindTooltip("Ziel");
+                const startIcon = L.divIcon({
+                    className: "",
+                    html: '<span class="trip-map-marker trip-map-marker--start" aria-hidden="true">S</span>',
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12],
+                    tooltipAnchor: [0, -14]
+                });
+                const endIcon = L.divIcon({
+                    className: "",
+                    html: '<span class="trip-map-marker trip-map-marker--end" aria-hidden="true">Z</span>',
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12],
+                    tooltipAnchor: [0, -14]
+                });
+
+                L.marker(startPoint, { icon: startIcon, title: "Start" })
+                    .addTo(map)
+                    .bindTooltip("Start");
+                L.marker(endPoint, { icon: endIcon, title: "Ziel" })
+                    .addTo(map)
+                    .bindTooltip("Ziel");
                 map.fitBounds([startPoint, endPoint], {
                     padding: [35, 35],
                     maxZoom: 16
                 });
 
                 mapCanvas._leafletMap = map;
-                setTimeout(() => map.invalidateSize(), 0);
-            } else if (willOpen) {
-                setTimeout(() => mapCanvas._leafletMap.invalidateSize(), 0);
+            }
+
+            if (!willOpen) {
+                return;
+            }
+
+            const map = mapCanvas._leafletMap;
+            setTimeout(() => map.invalidateSize(), 0);
+
+            if (!tripId || mapCanvas._routeLoaded || mapCanvas._routeLoading) {
+                return;
+            }
+
+            mapCanvas._routeLoading = true;
+            mapTitle.textContent = "Route wird geladen ...";
+
+            try {
+                const response = await fetch(
+                    `${TRIP_ROUTE_API_URL}?trip_id=${encodeURIComponent(tripId)}`,
+                    { cache: "no-store" }
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Route API HTTP ${response.status}`);
+                }
+
+                const routeData = await response.json();
+                const routePoints = (Array.isArray(routeData.points) ? routeData.points : [])
+                    .filter(point =>
+                        Number.isFinite(Number(point.latitude)) &&
+                        Number.isFinite(Number(point.longitude))
+                    )
+                    .sort((a, b) =>
+                        Number(a.point_index || 0) - Number(b.point_index || 0)
+                    )
+                    .map(point => [
+                        Number(point.latitude),
+                        Number(point.longitude)
+                    ]);
+
+                if (routePoints.length >= 2) {
+                    const routeLine = L.polyline(routePoints, {
+                        color: "#3388ff",
+                        weight: 5,
+                        opacity: 0.9,
+                        lineJoin: "round"
+                    }).addTo(map);
+
+                    map.fitBounds(routeLine.getBounds(), {
+                        padding: [35, 35],
+                        maxZoom: 16
+                    });
+
+                    mapTitle.textContent = `Route · ${routePoints.length} Punkte`;
+                } else {
+                    mapTitle.textContent = "Start und Ziel · keine Route vorhanden";
+                }
+
+                mapCanvas._routeLoaded = true;
+
+            } catch (error) {
+                console.error("Trip Route API Fehler:", error);
+                mapTitle.textContent = "Start und Ziel · Route nicht verfügbar";
+
+            } finally {
+                mapCanvas._routeLoading = false;
             }
         });
     }
@@ -1608,8 +1713,8 @@ function createChargingCard(session) {
 
 function renderChargeCurve(container, rawPoints, chargeType) {
     const points = rawPoints
-        .map(p => ({ soc:Number(p.soc_pct), kw:Number(p.power_kw), elapsed:Number(p.elapsed_seconds) }))
-        .filter(p => Number.isFinite(p.soc) && Number.isFinite(p.kw))
+        .map(p => ({ kw:p.power_kw == null ? NaN : Number(p.power_kw), elapsed:p.elapsed_seconds == null ? NaN : Number(p.elapsed_seconds) }))
+        .filter(p => Number.isFinite(p.elapsed) && p.elapsed >= 0 && Number.isFinite(p.kw))
         .sort((a,b) => a.elapsed-b.elapsed);
 
     if (points.length < 2) {
@@ -1620,23 +1725,19 @@ function renderChargeCurve(container, rawPoints, chargeType) {
     const W=900, H=300, P={l:58,r:22,t:22,b:42};
     const pw=W-P.l-P.r, ph=H-P.t-P.b;
 
-    let minSoc=Math.floor(Math.min(...points.map(p=>p.soc)));
-    let maxSoc=Math.ceil(Math.max(...points.map(p=>p.soc)));
-    if (maxSoc-minSoc < 5) {
-        const c=(minSoc+maxSoc)/2;
-        minSoc=Math.max(0,Math.floor(c-2.5));
-        maxSoc=Math.min(100,Math.ceil(c+2.5));
-    }
-    if (maxSoc<=minSoc) maxSoc=Math.min(100,minSoc+1);
-
+    const durationMinutes=Math.max(points[points.length-1].elapsed/60,1);
+    const roughStep=durationMinutes/6;
+    const magnitude=10**Math.floor(Math.log10(roughStep));
+    const xStep=[1,2,5,10].map(n=>n*magnitude).find(n=>n>=roughStep);
+    const maxMinutes=Math.ceil(durationMinutes/xStep)*xStep;
     const measuredMax=Math.max(...points.map(p=>p.kw),1);
     const yStep=measuredMax<=25?5:measuredMax<=100?20:50;
     const maxKw=Math.ceil(measuredMax/yStep)*yStep;
 
-    const x=s=>P.l+((s-minSoc)/(maxSoc-minSoc))*pw;
+    const x=minutes=>P.l+(minutes/maxMinutes)*pw;
     const y=k=>P.t+ph-(Math.max(0,k)/maxKw)*ph;
     const color=chargeType==="DC"?"#ffd43b":"#38c172";
-    const path=points.map((p,i)=>`${i?"L":"M"} ${x(p.soc).toFixed(2)} ${y(p.kw).toFixed(2)}`).join(" ");
+    const path=points.map((p,i)=>`${i?"L":"M"} ${x(p.elapsed/60).toFixed(2)} ${y(p.kw).toFixed(2)}`).join(" ");
 
     let grid="";
     for(let v=0;v<=maxKw;v+=yStep){
@@ -1645,11 +1746,12 @@ function renderChargeCurve(container, rawPoints, chargeType) {
         <text x="${P.l-10}" y="${yy+4}" text-anchor="end" class="curve-axis-text">${v}</text>`;
     }
 
-    const span=maxSoc-minSoc, xStep=span<=10?2:span<=30?5:10;
-    for(let v=Math.ceil(minSoc/xStep)*xStep;v<=maxSoc;v+=xStep){
+
+    for(let i=0;i<=Math.round(maxMinutes/xStep);i++){
+        const v=i*xStep;
         const xx=x(v);
         grid+=`<line x1="${xx}" y1="${P.t}" x2="${xx}" y2="${H-P.b}" class="curve-grid-line curve-grid-line-vertical"/>
-        <text x="${xx}" y="${H-15}" text-anchor="middle" class="curve-axis-text">${v}%</text>`;
+        <text x="${xx}" y="${H-15}" text-anchor="middle" class="curve-axis-text">${formatNumber(v, xStep<1?1:0)}</text>`;
     }
 
     const peak=points.reduce((a,p)=>p.kw>a.kw?p:a,points[0]);
@@ -1657,15 +1759,15 @@ function renderChargeCurve(container, rawPoints, chargeType) {
     container.innerHTML=`
         <div class="charge-curve-summary">
             <span>${points.length} Messpunkte</span>
-            <span>Peak ${formatNumber(peak.kw,1)} kW bei ${formatNumber(peak.soc,1)} %</span>
+            <span>Peak ${formatNumber(peak.kw,1)} kW nach ${formatNumber(peak.elapsed/60,1)} min</span>
         </div>
         <div class="charge-curve-chart">
-            <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ladekurve">
+            <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ladekurve: Leistung in kW über Minuten seit Sessionbeginn">
                 ${grid}
                 <line x1="${P.l}" y1="${P.t}" x2="${P.l}" y2="${H-P.b}" class="curve-axis-line"/>
                 <line x1="${P.l}" y1="${H-P.b}" x2="${W-P.r}" y2="${H-P.b}" class="curve-axis-line"/>
                 <text x="16" y="${P.t+ph/2}" transform="rotate(-90 16 ${P.t+ph/2})" text-anchor="middle" class="curve-axis-label">kW</text>
-                <text x="${P.l+pw/2}" y="${H-2}" text-anchor="middle" class="curve-axis-label">SOC</text>
+                <text x="${P.l+pw/2}" y="${H-2}" text-anchor="middle" class="curve-axis-label">Zeit seit Sessionbeginn (min)</text>
                 <path d="${path}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
             </svg>
         </div>`;
@@ -1677,6 +1779,57 @@ function renderChargeCurve(container, rawPoints, chargeType) {
  * DATEN LADEN
  * ============================================================
  */
+
+function getHistoryTimestamp(item) {
+    const timestamp = new Date(
+        item.end_time || item.start_time || 0
+    ).getTime();
+
+    return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+
+function selectHistoryByDistance(trips, chargingSessions, maxDistanceKm) {
+    if (maxDistanceKm === "all") {
+        return {
+            trips: [...trips],
+            chargingSessions: [...chargingSessions]
+        };
+    }
+
+    const sortedTrips = [...trips].sort(
+        (a, b) => getHistoryTimestamp(b) - getHistoryTimestamp(a)
+    );
+    const selectedTrips = [];
+    let selectedDistance = 0;
+
+    for (const trip of sortedTrips) {
+        if (selectedTrips.length > 0 && selectedDistance >= maxDistanceKm) {
+            break;
+        }
+
+        selectedTrips.push(trip);
+        selectedDistance += Math.max(0, Number(trip.distance_km || 0));
+    }
+
+    if (selectedTrips.length === 0) {
+        return { trips: [], chargingSessions: [] };
+    }
+
+    const cutoffTime = Math.min(
+        ...selectedTrips.map(getHistoryTimestamp).filter(Boolean)
+    );
+    const selectedChargingSessions = Number.isFinite(cutoffTime)
+        ? chargingSessions.filter(
+            session => getHistoryTimestamp(session) >= cutoffTime
+        )
+        : [];
+
+    return {
+        trips: selectedTrips,
+        chargingSessions: selectedChargingSessions
+    };
+}
 
 async function loadHistory() {
 
@@ -1690,16 +1843,6 @@ async function loadHistory() {
 
 
     try {
-
-        const encodedDays =
-            encodeURIComponent(selectedDays);
-
-        const tripUrl =
-            `${API_URL}?days=${encodedDays}`;
-
-        const chargingUrl =
-            `${CHARGING_API_URL}?days=${encodedDays}`;
-
 
         if (!allHistoryPromise) {
             allHistoryPromise = Promise.all([
@@ -1724,50 +1867,24 @@ async function loadHistory() {
             });
         }
 
-        const [tripResponse, chargingResponse, completeHistory] =
-            await Promise.all([
-                fetch(tripUrl, { cache: "no-store" }),
-                fetch(chargingUrl, { cache: "no-store" }),
-                allHistoryPromise
-            ]);
+        const completeHistory = await allHistoryPromise;
 
-
-        if (!tripResponse.ok) {
-            throw new Error(
-                `Trip API HTTP ${tripResponse.status}`
-            );
+        if (!completeHistory) {
+            throw new Error("Vollständige History konnte nicht geladen werden");
         }
 
-        if (!chargingResponse.ok) {
-            throw new Error(
-                `Charging API HTTP ${chargingResponse.status}`
-            );
-        }
-
-
-        const tripData =
-            await tripResponse.json();
-
-        const chargingData =
-            await chargingResponse.json();
-
-
-        const trips =
-            Array.isArray(tripData)
-                ? tripData
-                : (tripData.trips || []);
-
-        const chargingSessions =
-            Array.isArray(chargingData)
-                ? chargingData
-                : (chargingData.charging_sessions || []);
+        const selectedHistory = selectHistoryByDistance(
+            completeHistory.trips,
+            completeHistory.chargingSessions,
+            selectedDistanceKm
+        );
 
 
         renderHistory(
-            trips,
-            chargingSessions,
-            completeHistory?.trips,
-            completeHistory?.chargingSessions
+            selectedHistory.trips,
+            selectedHistory.chargingSessions,
+            completeHistory.trips,
+            completeHistory.chargingSessions
         );
 
 
@@ -1813,7 +1930,7 @@ async function loadHistory() {
 
 /*
  * ============================================================
- * ZEITRAUM ÄNDERN
+ * STRECKE ÄNDERN
  * ============================================================
  */
 
@@ -1827,8 +1944,9 @@ rangeSelect.addEventListener(
     "change",
     function () {
 
-        selectedDays =
-            rangeSelect.value;
+        selectedDistanceKm = rangeSelect.value === "all"
+            ? "all"
+            : Number(rangeSelect.value);
 
 
         loadHistory();
