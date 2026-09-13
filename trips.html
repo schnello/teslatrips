@@ -75,6 +75,28 @@
             border-color: rgba(255, 255, 255, 0.6);
         }
 
+        .export-trips-button {
+            padding: 8px 12px;
+            color: #fff;
+            font-size: 14px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .export-trips-button:hover:not(:disabled),
+        .export-trips-button:focus-visible:not(:disabled) {
+            border-color: var(--bright-red);
+            background: rgba(255, 26, 26, 0.14);
+            outline: none;
+        }
+
+        .export-trips-button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
         .stats {
             grid-template-columns: repeat(4, 1fr);
         }
@@ -225,6 +247,15 @@
             <option value="all">Unbegrenzt</option>
         </select>
 
+        <button
+            id="exportTripsButton"
+            class="export-trips-button"
+            type="button"
+            disabled
+        >
+            CSV exportieren
+        </button>
+
     </div>
 
 
@@ -358,6 +389,85 @@ const CHARGING_CURVE_API_URL =
 
 let selectedDistanceKm = 300;
 let allHistoryPromise = null;
+let selectedTripsForExport = [];
+
+
+function getExportLocation(trip, point) {
+    return formatLocationName(
+        trip[`${point}_location_name`],
+        trip[`${point}_street`],
+        trip[`${point}_house_number`],
+        trip[`${point}_city`],
+        trip[`${point}_country`]
+    );
+}
+
+
+function formatCsvValue(value) {
+    const normalized = value === null || value === undefined
+        ? ""
+        : String(value);
+
+    return `"${normalized.replace(/"/g, '""')}"`;
+}
+
+
+function updateTripExport(trips) {
+    selectedTripsForExport = Array.isArray(trips) ? trips : [];
+    document.getElementById("exportTripsButton").disabled =
+        selectedTripsForExport.length === 0;
+}
+
+
+function exportSelectedTrips() {
+    if (selectedTripsForExport.length === 0) {
+        return;
+    }
+
+    const headers = [
+        "Startzeit",
+        "Endzeit",
+        "Dauer (Minuten)",
+        "Distanz (km)",
+        "Verbrauchte Energie (kWh)",
+        "Verbrauch (kWh/100 km)",
+        "Durchschnittsgeschwindigkeit (km/h)",
+        "Batterie Start (%)",
+        "Batterie Ende (%)",
+        "Start",
+        "Ziel"
+    ];
+
+    const rows = selectedTripsForExport
+        .slice()
+        .sort((a, b) => getHistoryTimestamp(b) - getHistoryTimestamp(a))
+        .map(trip => [
+            trip.start_time,
+            trip.end_time,
+            Number(trip.duration_seconds || 0) / 60,
+            trip.distance_km,
+            trip.consumed_kwh,
+            trip.avg_kwh_100km,
+            trip.avg_speed_kmh,
+            trip.start_battery_pct,
+            trip.end_battery_pct,
+            getExportLocation(trip, "start"),
+            getExportLocation(trip, "end")
+        ].map(formatCsvValue).join(";"));
+
+    const csv = [headers.map(formatCsvValue).join(";"), ...rows].join("\r\n");
+    const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const today = new Date().toISOString().slice(0, 10);
+
+    link.href = url;
+    link.download = `tesla-fahrten-${today}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
 
 
 /*
@@ -1833,6 +1943,8 @@ function selectHistoryByDistance(trips, chargingSessions, maxDistanceKm) {
 
 async function loadHistory() {
 
+    updateTripExport([]);
+
     document.getElementById(
         "tripContainer"
     ).innerHTML = `
@@ -1878,6 +1990,8 @@ async function loadHistory() {
             completeHistory.chargingSessions,
             selectedDistanceKm
         );
+
+        updateTripExport(selectedHistory.trips);
 
 
         renderHistory(
@@ -1938,6 +2052,12 @@ const rangeSelect =
     document.getElementById(
         "rangeSelect"
     );
+
+
+document.getElementById("exportTripsButton").addEventListener(
+    "click",
+    exportSelectedTrips
+);
 
 
 rangeSelect.addEventListener(
