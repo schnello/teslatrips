@@ -404,6 +404,86 @@ const CHARGING_CURVE_API_URL =
 
 /*
  * ============================================================
+ * ZUGANGSSCHLÜSSEL
+ * ============================================================
+ *
+ * Die Daten-API verlangt den Header „X-Trips-Key“.
+ * Der Schlüssel kommt einmalig über den Link …/trips#<schlüssel>,
+ * wird im Browser gespeichert und aus der Adresszeile entfernt.
+ * Der Teil nach „#“ wird vom Browser nie an den Server geschickt.
+ */
+
+const TRIPS_KEY_STORAGE = "lilithTripsKey";
+
+function readKeyFromUrl() {
+
+    const hashKey = decodeURIComponent(location.hash.replace(/^#/, "")).trim();
+
+    if (hashKey) {
+        try {
+            localStorage.setItem(TRIPS_KEY_STORAGE, hashKey);
+        } catch (error) {
+            window._tripsKeyFallback = hashKey;
+        }
+        history.replaceState(null, "", location.pathname + location.search);
+    }
+}
+
+function getTripsKey() {
+
+    try {
+        return localStorage.getItem(TRIPS_KEY_STORAGE) || window._tripsKeyFallback || "";
+    } catch (error) {
+        return window._tripsKeyFallback || "";
+    }
+}
+
+function apiFetch(url) {
+
+    const key = getTripsKey();
+
+    return fetch(url, {
+        cache: "no-store",
+        headers: key ? { "X-Trips-Key": key } : {}
+    });
+}
+
+function showAccessForm() {
+
+    const container = document.getElementById("tripContainer");
+
+    container.innerHTML = `
+        <div class="access-box">
+            <div class="access-title">Kein Zugriff</div>
+            <div class="access-text">Bitte den Link mit Schlüssel öffnen oder den Schlüssel hier einfügen.</div>
+            <form class="access-form">
+                <input type="password" class="access-input" autocomplete="off" placeholder="Schlüssel" aria-label="Schlüssel">
+                <button type="submit" class="access-button">Öffnen</button>
+            </form>
+        </div>
+    `;
+
+    container.querySelector(".access-form").addEventListener("submit", event => {
+        event.preventDefault();
+        const value = container.querySelector(".access-input").value.trim();
+        if (!value) {
+            return;
+        }
+        try {
+            localStorage.setItem(TRIPS_KEY_STORAGE, value);
+        } catch (error) {
+            window._tripsKeyFallback = value;
+        }
+        allHistoryPromise = null;
+        loadHistory();
+    });
+}
+
+readKeyFromUrl();
+
+
+/*
+ * ============================================================
  * STRECKE
  * ============================================================
  */
@@ -1365,7 +1445,9 @@ formatLocationName(
     const startCoordinates = getTripCoordinates(trip, "start");
     const endCoordinates = getTripCoordinates(trip, "end");
     const tripId = trip.start_time_ms ?? null;
-    const hasMap = startCoordinates && endCoordinates;
+    // Start/Ziel in einer Privatzone (Zuhause, Arbeit) kommen ohne Koordinaten;
+    // die Karte gibt es trotzdem, solange ein Punkt oder eine Route da sein kann.
+    const hasMap = Boolean(startCoordinates || endCoordinates || tripId);
     const mapMarkup = hasMap
         ? `
             <div class="trip-map">
@@ -1588,8 +1670,8 @@ formatLocationName(
                     return;
                 }
 
-                const startPoint = [startCoordinates.latitude, startCoordinates.longitude];
-                const endPoint = [endCoordinates.latitude, endCoordinates.longitude];
+                const startPoint = startCoordinates ? [startCoordinates.latitude, startCoordinates.longitude] : null;
+                const endPoint = endCoordinates ? [endCoordinates.latitude, endCoordinates.longitude] : null;
                 const map = L.map(mapCanvas, { scrollWheelZoom: false });
 
                 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -1612,16 +1694,28 @@ formatLocationName(
                     tooltipAnchor: [0, -14]
                 });
 
-                L.marker(startPoint, { icon: startIcon, title: "Start" })
-                    .addTo(map)
-                    .bindTooltip("Start");
-                L.marker(endPoint, { icon: endIcon, title: "Ziel" })
-                    .addTo(map)
-                    .bindTooltip("Ziel");
-                map.fitBounds([startPoint, endPoint], {
-                    padding: [35, 35],
-                    maxZoom: 16
-                });
+                if (startPoint) {
+                    L.marker(startPoint, { icon: startIcon, title: "Start" })
+                        .addTo(map)
+                        .bindTooltip("Start");
+                }
+                if (endPoint) {
+                    L.marker(endPoint, { icon: endIcon, title: "Ziel" })
+                        .addTo(map)
+                        .bindTooltip("Ziel");
+                }
+
+                const knownPoints = [startPoint, endPoint].filter(Boolean);
+
+                if (knownPoints.length > 0) {
+                    map.fitBounds(knownPoints, {
+                        padding: [35, 35],
+                        maxZoom: 16
+                    });
+                } else {
+                    // nur Route (Start und Ziel in Privatzonen) – Ausschnitt folgt mit der Route
+                    map.setView([47.6, 13.5], 7);
+                }
 
                 mapCanvas._leafletMap = map;
             }
@@ -1641,9 +1735,8 @@ formatLocationName(
             mapTitle.textContent = "Route wird geladen ...";
 
             try {
-                const response = await fetch(
-                    `${TRIP_ROUTE_API_URL}?trip_id=${encodeURIComponent(tripId)}`,
-                    { cache: "no-store" }
+                const response = await apiFetch(
+                    `${TRIP_ROUTE_API_URL}?trip_id=${encodeURIComponent(tripId)}`
                 );
 
                 if (!response.ok) {
@@ -1905,9 +1998,8 @@ function createChargingCard(session) {
             if (content.dataset.loaded === "true") return;
 
             try {
-                const response = await fetch(
-                    `${CHARGING_CURVE_API_URL}?session_id=${encodeURIComponent(session.session_id)}`,
-                    { cache: "no-store" }
+                const response = await apiFetch(
+                    `${CHARGING_CURVE_API_URL}?session_id=${encodeURIComponent(session.session_id)}`
                 );
                 if (!response.ok) throw new Error(`Curve API HTTP ${response.status}`);
                 const data = await response.json();
@@ -2068,9 +2160,13 @@ async function loadHistory() {
 
         if (!allHistoryPromise) {
             allHistoryPromise = Promise.all([
-                fetch(`${API_URL}?days=all`, { cache: "no-store" }),
-                fetch(`${CHARGING_API_URL}?days=all`, { cache: "no-store" })
+                apiFetch(`${API_URL}?days=all`),
+                apiFetch(`${CHARGING_API_URL}?days=all`)
             ]).then(async ([allTripResponse, allChargingResponse]) => {
+                if (allTripResponse.status === 403 || allChargingResponse.status === 403) {
+                    return { denied: true };
+                }
+
                 if (!allTripResponse.ok || !allChargingResponse.ok) {
                     throw new Error("Vollständige History konnte nicht geladen werden");
                 }
@@ -2090,6 +2186,16 @@ async function loadHistory() {
         }
 
         const completeHistory = await allHistoryPromise;
+
+        if (completeHistory && completeHistory.denied) {
+            allHistoryPromise = null;
+            for (const id of ["totalTrips", "totalDistance", "averageConsumption", "distanceSinceLastCharge", "chargingCost"]) {
+                document.getElementById(id).textContent = "–";
+            }
+            document.getElementById("consumptionTrend").innerHTML = "";
+            showAccessForm();
+            return;
+        }
 
         if (!completeHistory) {
             throw new Error("Vollständige History konnte nicht geladen werden");
