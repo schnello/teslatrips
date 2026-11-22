@@ -580,12 +580,12 @@ function exportSelectedTrips() {
  *
  * Beispiel:
  *
- * Kopernikus-Straße, Oberhaus, Vöcklabruck,
- * Bezirk Vöcklabruck, Oberösterreich, 4840, Österreich
+ * Hauptstraße, Ortsteil, Musterstadt,
+ * Bezirk Musterland, Bundesland, 1234, Österreich
  *
  * wird angezeigt als:
  *
- * Kopernikus-Straße, Vöcklabruck, Österreich
+ * Hauptstraße, Musterstadt, Österreich
  *
  */
 
@@ -618,11 +618,11 @@ function formatLocationName(name, street, houseNumber, city, country) {
     // 2. Fallback: vollständigen Nominatim-Namen auswerten
     //
     // Beispiel:
-    // 20, Tiefenbach, Frankenburg am Hausruck,
-    // Bezirk Vöcklabruck, Oberösterreich, 4871, Österreich
+    // 1, Hauptplatz, Musterstadt,
+    // Bezirk Musterland, Bundesland, 1234, Österreich
     //
     // wird zu:
-    // Tiefenbach 20, Frankenburg am Hausruck, Österreich
+    // Hauptplatz 1, Musterstadt, Österreich
     // ============================================================
 
     if (name) {
