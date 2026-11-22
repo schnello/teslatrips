@@ -341,6 +341,20 @@
             </div>
         </div>
 
+
+        <div class="stat">
+            <div
+                class="stat-value"
+                id="batterySoh"
+            >
+                –
+            </div>
+
+            <div class="stat-label">
+                % Akku-SoH
+            </div>
+        </div>
+
     </section>
 
     <section
@@ -400,6 +414,9 @@ const CHARGING_API_URL =
 
 const CHARGING_CURVE_API_URL =
     "/api/tesla/charging/curve";
+
+const SOH_API_URL =
+    "/api/tesla/soh";
 
 
 /*
@@ -476,10 +493,67 @@ function showAccessForm() {
         }
         allHistoryPromise = null;
         loadHistory();
+        loadSoh();
     });
 }
 
 readKeyFromUrl();
+
+
+/*
+ * ============================================================
+ * AKKUGESUNDHEIT (SoH)
+ * ============================================================
+ *
+ * Node-RED berechnet den SoH täglich um 04:00 (Regression über
+ * 90 Tage Akkustand/Restenergie) und speichert ihn. Die Kachel
+ * zeigt den letzten Wert, der Tooltip die Veränderung seit Beginn.
+ */
+
+async function loadSoh() {
+
+    const element = document.getElementById("batterySoh");
+    const formatPct = value => value.toLocaleString("de-AT", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1
+    });
+    const formatDate = iso => new Date(iso + "T12:00:00Z").toLocaleDateString("de-AT");
+
+    try {
+        const response = await apiFetch(SOH_API_URL);
+
+        if (!response.ok) {
+            throw new Error("SoH-API: " + response.status);
+        }
+
+        const data = await response.json();
+        const latest = data && data.latest;
+        const history = (data && Array.isArray(data.history)) ? data.history : [];
+
+        if (!latest || !Number.isFinite(latest.soh_pct)) {
+            throw new Error("Kein SoH-Wert vorhanden");
+        }
+
+        element.textContent = formatPct(latest.soh_pct);
+
+        let title = `Akkugesundheit (SoH) vom ${formatDate(latest.date)}`;
+        if (Number.isFinite(latest.odometer_km)) {
+            title += ` bei ${Math.round(latest.odometer_km).toLocaleString("de-AT")} km`;
+        }
+        if (history.length > 1) {
+            const first = history[0];
+            const change = latest.soh_pct - first.soh_pct;
+            title += `\nSeit ${formatDate(first.date)}: ${change >= 0 ? "+" : "−"}${formatPct(Math.abs(change))} Prozentpunkte`;
+        }
+        title += "\nGeschätzt aus Akkustand und Restenergie der letzten 90 Tage";
+        element.title = title;
+
+    } catch (error) {
+        console.error("SoH konnte nicht geladen werden:", error);
+        element.textContent = "–";
+        element.title = "";
+    }
+}
 
 
 /*
@@ -2243,7 +2317,7 @@ async function loadHistory() {
 
         if (completeHistory && completeHistory.denied) {
             allHistoryPromise = null;
-            for (const id of ["totalTrips", "totalDistance", "averageConsumption", "distanceSinceLastCharge", "chargingCost"]) {
+            for (const id of ["totalTrips", "totalDistance", "averageConsumption", "distanceSinceLastCharge", "chargingCost", "batterySoh"]) {
                 document.getElementById(id).textContent = "–";
             }
             document.getElementById("consumptionTrend").innerHTML = "";
@@ -2351,6 +2425,7 @@ rangeSelect.addEventListener(
  */
 
 loadHistory();
+loadSoh();
 
 </script>
 
