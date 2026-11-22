@@ -763,7 +763,9 @@ function chargeCostLine(session) {
     const label =
         session.price_source === "supercharger_invoice" && session.sc_site_name
             ? escapeHtml(String(session.sc_site_name))
-            : CHARGE_PRICE_LABELS[session.price_source];
+            : session.price_source === "public_dc_flat" && session.sc_invoice_status === "none"
+                ? "Fremdlader (Pauschale)"
+                : CHARGE_PRICE_LABELS[session.price_source];
 
     if (label) {
 
