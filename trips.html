@@ -1573,8 +1573,8 @@ formatLocationName(
     const startCoordinates = getTripCoordinates(trip, "start");
     const endCoordinates = getTripCoordinates(trip, "end");
     const tripId = trip.start_time_ms ?? null;
-    // Start/Ziel in einer Privatzone (Zuhause, Arbeit) kommen ohne Koordinaten;
-    // die Karte gibt es trotzdem, solange ein Punkt oder eine Route da sein kann.
+    // Fehlen Start/Ziel-Koordinaten (z. B. bei unvollständigen Altdaten), gibt es
+    // die Karte trotzdem, solange ein Punkt oder eine Route da sein kann.
     const hasMap = Boolean(startCoordinates || endCoordinates || tripId);
     const mapMarkup = hasMap
         ? `
@@ -1841,7 +1841,7 @@ formatLocationName(
                         maxZoom: 16
                     });
                 } else {
-                    // nur Route (Start und Ziel in Privatzonen) – Ausschnitt folgt mit der Route
+                    // nur Route (Start und Ziel ohne Koordinaten) – Ausschnitt folgt mit der Route
                     map.setView([47.6, 13.5], 7);
                 }
 
