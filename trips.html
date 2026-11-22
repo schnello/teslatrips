@@ -729,8 +729,16 @@ function formatDuration(seconds) {
 const CHARGE_PRICE_LABELS = {
     home: "Zuhause",
     work: "Arbeit",
-    public_dc_flat: "DC Pauschalpreis"
+    public_dc_flat: "DC Pauschalpreis",
+    supercharger_invoice: "Supercharger"
 };
+
+function escapeHtml(text) {
+
+    return text.replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[c]);
+}
 
 function hasChargingCost(session) {
 
@@ -753,7 +761,9 @@ function chargeCostLine(session) {
     ];
 
     const label =
-        CHARGE_PRICE_LABELS[session.price_source];
+        session.price_source === "supercharger_invoice" && session.sc_site_name
+            ? escapeHtml(String(session.sc_site_name))
+            : CHARGE_PRICE_LABELS[session.price_source];
 
     if (label) {
 
