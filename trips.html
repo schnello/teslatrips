@@ -1228,10 +1228,64 @@ function renderHistory(trips, chargingSessions, allTrips, allChargingSessions) {
         title.className =
             "day-title";
 
-        title.textContent =
+        const dateLabel =
+            document.createElement("span");
+
+        dateLabel.className =
+            "day-date";
+
+        dateLabel.textContent =
             formatDate(
                 dayItems[0].sort_time
             );
+
+        title.appendChild(dateLabel);
+
+
+        // Tageszusammenfassung: km + kWh der Fahrten, € der Ladungen
+        const dayTrips =
+            dayItems.filter(item => item.history_type === "trip");
+
+        const dayDistance =
+            dayTrips.reduce((sum, item) => sum + Number(item.data.distance_km || 0), 0);
+
+        const dayEnergy =
+            dayTrips.reduce((sum, item) => sum + Number(item.data.consumed_kwh || 0), 0);
+
+        const dayCostSessions =
+            dayItems.filter(item => item.history_type === "charging" && hasChargingCost(item.data));
+
+        const dayCost =
+            dayCostSessions.reduce((sum, item) => sum + Number(item.data.cost_eur), 0);
+
+        const summaryParts = [];
+
+        if (dayTrips.length > 0) {
+            summaryParts.push(`${formatNumber(dayDistance, 1)} km`);
+            summaryParts.push(`${formatNumber(dayEnergy, 1)} kWh`);
+        }
+
+        if (dayCostSessions.length > 0) {
+            summaryParts.push(`${formatNumber(dayCost, 2)} €`);
+        }
+
+        if (summaryParts.length > 0) {
+
+            const summary =
+                document.createElement("span");
+
+            summary.className =
+                "day-summary";
+
+            summary.textContent =
+                summaryParts.join(" · ");
+
+            summary.title =
+                "Gefahrene km und verbrauchte kWh der Fahrten" +
+                (dayCostSessions.length > 0 ? ", € = Ladekosten des Tages" : "");
+
+            title.appendChild(summary);
+        }
 
         section.appendChild(title);
 
