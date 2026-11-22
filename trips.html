@@ -98,12 +98,16 @@
         }
 
         .stats {
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(5, 1fr);
         }
 
         @media (max-width: 600px) {
             .stats {
                 grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stats .stat:last-child {
+                grid-column: span 2;
             }
         }
 
@@ -317,6 +321,23 @@
 
             <div class="stat-label">
                 km seit letzter Ladung
+            </div>
+        </div>
+
+
+        <div class="stat">
+            <div
+                class="stat-value"
+                id="chargingCost"
+            >
+                –
+            </div>
+
+            <div
+                class="stat-label"
+                id="chargingCostLabel"
+            >
+                € Ladekosten
             </div>
         </div>
 
@@ -701,6 +722,55 @@ function formatDuration(seconds) {
 
 /*
  * ============================================================
+ * LADEKOSTEN
+ * ============================================================
+ */
+
+const CHARGE_PRICE_LABELS = {
+    home: "Zuhause",
+    work: "Arbeit",
+    public_dc_flat: "DC Pauschalpreis"
+};
+
+function hasChargingCost(session) {
+
+    return session &&
+        session.cost_eur !== null &&
+        session.cost_eur !== undefined &&
+        session.cost_eur !== "" &&
+        Number.isFinite(Number(session.cost_eur));
+}
+
+function chargeCostLine(session) {
+
+    if (!hasChargingCost(session)) {
+
+        return "";
+    }
+
+    const parts = [
+        `${formatNumber(session.cost_eur, 2)} €`
+    ];
+
+    const label =
+        CHARGE_PRICE_LABELS[session.price_source];
+
+    if (label) {
+
+        parts.push(label);
+    }
+
+    if (Number(session.price_eur_kwh) > 0) {
+
+        parts.push(`${formatNumber(session.price_eur_kwh, 2)} €/kWh`);
+    }
+
+    return `<div class="charge-cost">${parts.join(" · ")}</div>`;
+}
+
+
+/*
+ * ============================================================
  * ZAHLEN
  * ============================================================
  */
@@ -952,6 +1022,32 @@ function renderHistory(trips, chargingSessions, allTrips, allChargingSessions) {
         distanceSinceLastCharge === null
             ? "–"
             : formatNumber(distanceSinceLastCharge);
+
+    // Ladekosten der gewählten Strecke (nur Sitzungen mit bekanntem Preis)
+    const costedSessions =
+        safeChargingSessions.filter(
+            session => hasChargingCost(session)
+        );
+
+    const totalChargingCost =
+        costedSessions.reduce(
+            (sum, session) => sum + Number(session.cost_eur),
+            0
+        );
+
+    document.getElementById(
+        "chargingCost"
+    ).textContent =
+        costedSessions.length > 0
+            ? formatNumber(totalChargingCost, 2)
+            : "–";
+
+    document.getElementById(
+        "chargingCostLabel"
+    ).title =
+        costedSessions.length < safeChargingSessions.length
+            ? `${costedSessions.length} von ${safeChargingSessions.length} Ladungen mit bekanntem Preis`
+            : "";
 
     renderConsumptionTrend(safeTrips);
 
@@ -1684,6 +1780,8 @@ function createChargingCard(session) {
                 <div class="charge-time">
                     ${startTime} → ${endTime}
                 </div>
+
+                ${chargeCostLine(session)}
             </div>
 
             <div class="charge-type">

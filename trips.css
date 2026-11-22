@@ -383,6 +383,15 @@ body {
     color: var(--muted);
 }
 
+.charge-cost {
+    margin-top: 4px;
+    margin-left: 18px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text, #f2f2f2);
+    letter-spacing: 0.5px;
+}
+
 .charge-type {
     padding: 5px 9px;
     border: 1px solid currentColor;
