@@ -425,6 +425,13 @@ body {
     letter-spacing: 0.5px;
 }
 
+.charge-energy {
+    margin-top: 2px;
+    margin-left: 18px;
+    font-size: 0.68rem;
+    color: var(--muted);
+}
+
 .charge-type {
     padding: 5px 9px;
     border: 1px solid currentColor;

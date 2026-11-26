@@ -7,7 +7,7 @@
     <title>Lilith · Trips</title>
     <link rel="icon" type="image/png" href="tesla.png">
 
-    <link rel="stylesheet" href="trips.css?v=20260823-2">
+    <link rel="stylesheet" href="trips.css?v=20261126-1">
     <link
         rel="stylesheet"
         href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -933,6 +933,32 @@ function chargeCostLine(session) {
     }
 
     return `<div class="charge-cost">${parts.join(" · ")}</div>`;
+}
+
+// Energiefluss einer Ladung: Netz (Wallbox) bzw. Eingang am Auto → Akku, mit Ladeverlust.
+// Nur wenn gemessen (Wallbox-Zähler bzw. Energiezähler des Autos seit 22.11.2026).
+function chargeEnergyLine(session) {
+
+    const positive = v => v !== null && v !== undefined && v !== "" && Number(v) > 0;
+    const battery = positive(session.battery_in_kwh) ? Number(session.battery_in_kwh) : null;
+    const loss = (input, label) => battery
+        ? ` → Akku ${formatNumber(battery, 2)} kWh · ${label} ${formatNumber((input / battery - 1) * 100, 0)} %`
+        : "";
+
+    let text = "";
+
+    if (positive(session.grid_energy_kwh)) {
+
+        const grid = Number(session.grid_energy_kwh);
+        text = `Netz ${formatNumber(grid, 2)} kWh (Wallbox)` + loss(grid, "Verluste");
+
+    } else if (positive(session.car_input_kwh) && battery) {
+
+        const input = Number(session.car_input_kwh);
+        text = `Am Auto ${formatNumber(input, 2)} kWh` + loss(input, "Verluste im Auto");
+    }
+
+    return text ? `<div class="charge-energy">${text}</div>` : "";
 }
 
 
@@ -2016,6 +2042,7 @@ function createChargingCard(session) {
                 </div>
 
                 ${chargeCostLine(session)}
+                ${chargeEnergyLine(session)}
             </div>
 
             <div class="charge-type">
