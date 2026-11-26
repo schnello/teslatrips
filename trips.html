@@ -505,8 +505,9 @@ readKeyFromUrl();
  * AKKUGESUNDHEIT (SoH)
  * ============================================================
  *
- * Node-RED berechnet den SoH täglich um 04:00 (Regression über
- * 90 Tage Akkustand/Restenergie) und speichert ihn. Die Kachel
+ * Node-RED berechnet den SoH täglich um 04:00 aus der BMS-Kapazität
+ * (NominalFullPackEnergyKwh, seit 26.11.2026; vorher Regression
+ * Akkustand/Restenergie) und speichert ihn. Die Kachel
  * zeigt den letzten Wert, der Tooltip die Veränderung seit Beginn.
  */
 
